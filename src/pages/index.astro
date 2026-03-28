@@ -8,10 +8,299 @@
 		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 		<meta name="viewport" content="width=device-width" />
 		<meta name="generator" content={Astro.generator} />
-		<title>Mona Mayhem</title>
+		<title>Mona Mayhem – GitHub Contribution Battle Arena</title>
+		<style>
+			*, *::before, *::after { box-sizing: border-box; }
+
+			body {
+				margin: 0;
+				font-family: system-ui, sans-serif;
+				background: #0d1117;
+				color: #e6edf3;
+				min-height: 100vh;
+				display: flex;
+				flex-direction: column;
+				align-items: center;
+				padding: 2rem 1rem;
+			}
+
+			header {
+				text-align: center;
+				margin-bottom: 2rem;
+			}
+
+			header h1 {
+				font-size: 2rem;
+				margin: 0 0 0.25rem;
+			}
+
+			header p {
+				color: #8b949e;
+				margin: 0;
+			}
+
+			.battle-form {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 1rem;
+				align-items: flex-end;
+				justify-content: center;
+				width: 100%;
+				max-width: 640px;
+				margin-bottom: 1.5rem;
+			}
+
+			.player-input {
+				display: flex;
+				flex-direction: column;
+				gap: 0.4rem;
+				flex: 1 1 180px;
+			}
+
+			.player-input label {
+				font-size: 0.85rem;
+				color: #8b949e;
+				font-weight: 600;
+				text-transform: uppercase;
+				letter-spacing: 0.05em;
+			}
+
+			.player-input input {
+				padding: 0.55rem 0.75rem;
+				border-radius: 6px;
+				border: 1px solid #30363d;
+				background: #161b22;
+				color: #e6edf3;
+				font-size: 1rem;
+				outline: none;
+				transition: border-color 0.15s;
+			}
+
+			.player-input input:focus {
+				border-color: #58a6ff;
+			}
+
+			.vs-badge {
+				font-size: 1.1rem;
+				font-weight: 700;
+				color: #f78166;
+				padding-bottom: 0.35rem;
+				flex: 0 0 auto;
+			}
+
+			.battle-btn {
+				padding: 0.6rem 1.5rem;
+				border-radius: 6px;
+				border: none;
+				background: #238636;
+				color: #fff;
+				font-size: 1rem;
+				font-weight: 600;
+				cursor: pointer;
+				transition: background 0.15s;
+				flex: 0 0 auto;
+			}
+
+			.battle-btn:hover:not(:disabled) {
+				background: #2ea043;
+			}
+
+			.battle-btn:disabled {
+				opacity: 0.6;
+				cursor: not-allowed;
+			}
+
+			.error-msg {
+				color: #f85149;
+				font-size: 0.9rem;
+				margin-bottom: 1rem;
+				min-height: 1.2em;
+				text-align: center;
+			}
+
+			.results {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 1.5rem;
+				justify-content: center;
+				width: 100%;
+				max-width: 900px;
+			}
+
+			.player-card {
+				background: #161b22;
+				border: 1px solid #30363d;
+				border-radius: 8px;
+				padding: 1.25rem;
+				flex: 1 1 300px;
+				min-width: 0;
+			}
+
+			.player-card h2 {
+				margin: 0 0 0.25rem;
+				font-size: 1.1rem;
+			}
+
+			.player-card .total {
+				color: #8b949e;
+				font-size: 0.85rem;
+				margin-bottom: 0.75rem;
+			}
+
+			.contribution-grid {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 2px;
+			}
+
+			.contribution-grid .day {
+				width: 10px;
+				height: 10px;
+				border-radius: 2px;
+				background: #161b22;
+				border: 1px solid #21262d;
+			}
+
+			.loading {
+				color: #8b949e;
+				font-size: 0.9rem;
+				padding: 1rem 0;
+				text-align: center;
+			}
+
+			.no-data {
+				color: #8b949e;
+				font-size: 0.85rem;
+			}
+		</style>
 	</head>
 	<body>
-		<h1>Mona Mayhem</h1>
-		<p>Welcome to Mona Mayhem! Time to build a GitHub Contribution Battle Arena.</p>
+		<header>
+			<h1>⚔️ Mona Mayhem</h1>
+			<p>GitHub Contribution Battle Arena</p>
+		</header>
+
+		<div class="battle-form">
+			<div class="player-input">
+				<label for="player1">Player 1</label>
+				<input id="player1" type="text" placeholder="GitHub username" autocomplete="off" />
+			</div>
+			<span class="vs-badge">VS</span>
+			<div class="player-input">
+				<label for="player2">Player 2</label>
+				<input id="player2" type="text" placeholder="GitHub username" autocomplete="off" />
+			</div>
+			<button id="battle-btn" class="battle-btn">⚔️ Battle</button>
+		</div>
+
+		<div id="error-msg" class="error-msg" role="alert" aria-live="polite"></div>
+
+		<div id="results" class="results" aria-live="polite"></div>
+
+		<script>
+			interface ContributionDay {
+				date: string;
+				count: number;
+				color?: string;
+			}
+
+			interface ContributionData {
+				total?: number;
+				contributions?: ContributionDay[];
+				weeks?: { days: ContributionDay[] }[];
+				error?: string;
+			}
+
+			const COLORS = ["#161b22", "#0e4429", "#006d32", "#26a641", "#39d353"];
+
+			function countColor(count: number): string {
+				if (count === 0) return COLORS[0];
+				if (count <= 3) return COLORS[1];
+				if (count <= 6) return COLORS[2];
+				if (count <= 9) return COLORS[3];
+				return COLORS[4];
+			}
+
+			function flattenDays(data: ContributionData): ContributionDay[] {
+				if (Array.isArray(data.contributions)) return data.contributions;
+				if (Array.isArray(data.weeks)) {
+					return data.weeks.flatMap((w) => w.days ?? []);
+				}
+				return [];
+			}
+
+			function renderCard(username: string, data: ContributionData): string {
+				const days = flattenDays(data);
+				const total =
+					data.total ??
+					days.reduce((sum: number, d: ContributionDay) => sum + (d.count ?? 0), 0);
+
+				const squares = days
+					.map((d: ContributionDay) => {
+						const color = d.color ?? countColor(d.count ?? 0);
+						const label = `${d.date ?? ""}: ${d.count ?? 0} contributions`;
+						return `<div class="day" style="background:${color}" title="${label}"></div>`;
+					})
+					.join("");
+
+				return `
+					<div class="player-card">
+						<h2>@${username}</h2>
+						<div class="total">${total.toLocaleString()} contributions</div>
+						<div class="contribution-grid">${squares || '<span class="no-data">No contribution data available.</span>'}</div>
+					</div>`;
+			}
+
+			async function fetchContributions(username: string): Promise<ContributionData> {
+				const res = await fetch(`/api/contributions/${encodeURIComponent(username)}`);
+				const json: ContributionData = await res.json();
+				if (!res.ok) {
+					throw new Error(json.error ?? `Failed to fetch data for ${username}`);
+				}
+				return json;
+			}
+
+			async function runBattle() {
+				const p1Input = document.getElementById("player1") as HTMLInputElement;
+				const p2Input = document.getElementById("player2") as HTMLInputElement;
+				const errorEl = document.getElementById("error-msg") as HTMLElement;
+				const resultsEl = document.getElementById("results") as HTMLElement;
+				const btn = document.getElementById("battle-btn") as HTMLButtonElement;
+
+				const u1 = p1Input.value.trim();
+				const u2 = p2Input.value.trim();
+
+				errorEl.textContent = "";
+				if (!u1 || !u2) {
+					errorEl.textContent = "Please enter both usernames before battling.";
+					return;
+				}
+
+				btn.disabled = true;
+				resultsEl.innerHTML = '<div class="loading">Fetching contribution data…</div>';
+
+				try {
+					const [d1, d2] = await Promise.all([
+						fetchContributions(u1),
+						fetchContributions(u2),
+					]);
+					resultsEl.innerHTML = renderCard(u1, d1) + renderCard(u2, d2);
+				} catch (err) {
+					errorEl.textContent =
+						err instanceof Error ? err.message : "Something went wrong.";
+					resultsEl.innerHTML = "";
+				} finally {
+					btn.disabled = false;
+				}
+			}
+
+			document.getElementById("battle-btn")?.addEventListener("click", runBattle);
+
+			["player1", "player2"].forEach((id) => {
+				document.getElementById(id)?.addEventListener("keydown", (e) => {
+					if ((e as KeyboardEvent).key === "Enter") runBattle();
+				});
+			});
+		</script>
 	</body>
 </html>
