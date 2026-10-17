@@ -8,8 +8,37 @@ const MAX_CACHE_ENTRIES = 500;
 const REQUEST_TIMEOUT_MS = 8000;
 
 type CacheEntry = {
-  data: unknown;
+  data: ContributionData;
   expiresAt: number;
+};
+
+type ContributionData = {
+  username: string;
+  total: number;
+  from: string;
+  to: string;
+  contributions: { date: string; count: number; color: string }[];
+};
+
+type GitHubResponse = {
+  data?: {
+    user?: {
+      login: string;
+      contributionsCollection: {
+        contributionCalendar: {
+          totalContributions: number;
+          weeks: {
+            contributionDays: {
+              date: string;
+              contributionCount: number;
+              color: string;
+            }[];
+          }[];
+        };
+      };
+    } | null;
+  };
+  errors?: { type?: string }[];
 };
 
 const contributionCache = new Map<string, CacheEntry>();
@@ -29,6 +58,7 @@ const createJsonResponse = (
     status,
     headers: {
       ...baseHeaders,
+      ...(status !== 200 ? { "Cache-Control": "no-store" } : {}),
       ...(extraHeaders ?? {}),
     },
   });
@@ -55,7 +85,10 @@ export const GET: APIRoute = async ({ params }) => {
     });
   }
 
-  const cacheKey = username.toLowerCase();
+  const to = new Date();
+  const from = new Date(to);
+  from.setUTCFullYear(from.getUTCFullYear() - 1);
+  const cacheKey = `${username.toLowerCase()}:${to.toISOString().slice(0, 10)}`;
   const now = Date.now();
   const cached = contributionCache.get(cacheKey);
 
@@ -63,25 +96,52 @@ export const GET: APIRoute = async ({ params }) => {
     return createJsonResponse(cached.data, 200, { "X-Cache": "HIT" });
   }
 
+  const token = process.env.GITHUB_TOKEN || import.meta.env.GITHUB_TOKEN;
+  if (!token) {
+    return createJsonResponse(
+      { error: "Contribution service is not configured. Please try again later." },
+      503,
+    );
+  }
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   try {
     const upstreamResponse = await fetch(
-      `https://github.com/${encodeURIComponent(username)}.contribs`,
+      "https://api.github.com/graphql",
       {
+        method: "POST",
         headers: {
           Accept: "application/json",
+          "Content-Type": "application/json",
+          Authorization: ["Bearer", token].join(" "),
           "User-Agent": "mona-mayhem/1.0",
         },
+        body: JSON.stringify({
+          query: `query Contributions($username: String!, $from: DateTime!, $to: DateTime!) {
+            user(login: $username) {
+              login
+              contributionsCollection(from: $from, to: $to) {
+                contributionCalendar {
+                  totalContributions
+                  weeks { contributionDays { date contributionCount color } }
+                }
+              }
+            }
+          }`,
+          variables: { username, from: from.toISOString(), to: to.toISOString() },
+        }),
         signal: controller.signal,
       },
     );
 
-    if (upstreamResponse.status === 404) {
-      return createJsonResponse({ error: "GitHub user not found." }, 404, {
-        "X-Cache": "MISS",
-      });
+    if (upstreamResponse.status === 429 || upstreamResponse.status === 403) {
+      return createJsonResponse(
+        { error: "GitHub rate limit reached. Please try again later." },
+        429,
+        { "X-Cache": "MISS" },
+      );
     }
 
     if (!upstreamResponse.ok) {
@@ -95,7 +155,7 @@ export const GET: APIRoute = async ({ params }) => {
       );
     }
 
-    let payload: unknown;
+    let payload: GitHubResponse;
     try {
       payload = await upstreamResponse.json();
     } catch {
@@ -106,13 +166,61 @@ export const GET: APIRoute = async ({ params }) => {
       );
     }
 
+    if (payload.errors?.some((error) => error.type === "RATE_LIMITED")) {
+      return createJsonResponse(
+        { error: "GitHub rate limit reached. Please try again later." },
+        429,
+      );
+    }
+
+    if (payload.data?.user === null) {
+      return createJsonResponse({ error: "GitHub user not found." }, 404);
+    }
+
+    const user = payload.data?.user;
+    const calendar = user?.contributionsCollection?.contributionCalendar;
+    if (
+      payload.errors?.length ||
+      !user ||
+      typeof user.login !== "string" ||
+      !calendar ||
+      !Number.isSafeInteger(calendar.totalContributions) ||
+      calendar.totalContributions < 0 ||
+      !Array.isArray(calendar.weeks)
+    ) {
+      return createJsonResponse({ error: "Invalid contribution data received from GitHub." }, 502);
+    }
+
+    const days = calendar.weeks.flatMap((week) => week.contributionDays);
+    if (!days.length || days.some((day) =>
+      !day ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(day.date) ||
+      !Number.isSafeInteger(day.contributionCount) ||
+      day.contributionCount < 0 ||
+      !/^#[0-9a-f]{6}$/i.test(day.color)
+    )) {
+      return createJsonResponse({ error: "Invalid contribution data received from GitHub." }, 502);
+    }
+
+    const data: ContributionData = {
+      username: user.login,
+      total: calendar.totalContributions,
+      from: from.toISOString().slice(0, 10),
+      to: to.toISOString().slice(0, 10),
+      contributions: days.map((day) => ({
+        date: day.date,
+        count: day.contributionCount,
+        color: day.color,
+      })),
+    };
+
     contributionCache.set(cacheKey, {
-      data: payload,
+      data,
       expiresAt: now + CACHE_TTL_MS,
     });
     trimCache();
 
-    return createJsonResponse(payload, 200, { "X-Cache": "MISS" });
+    return createJsonResponse(data, 200, { "X-Cache": "MISS" });
   } catch (error) {
     if (cached) {
       return createJsonResponse(cached.data, 200, {
