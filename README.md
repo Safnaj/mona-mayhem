@@ -34,6 +34,23 @@ The workshop supports two tracks — follow the one that matches your preferred 
    - **GitHub Copilot CLI:** clone your repo locally, install `copilot`, and work from your terminal.
 3. Follow the [workshop guide](workshop/00-overview.md)
 
+## Running contribution battles
+
+Run `npm ci`, then set `GITHUB_TOKEN` in your server environment (or a local,
+git-ignored `.env` file) to a GitHub personal access token with access to the
+GitHub GraphQL API. No private-repository permissions are needed for public
+contributions. Never use a `PUBLIC_` environment variable for the token.
+
+Use `npm run dev` locally, or `npm run build` followed by
+`node ./dist/server/entry.mjs` for production. Set `GITHUB_TOKEN` at runtime on
+the production server.
+
+Battles compare GitHub's contribution calendars for the last 12 months, ending
+today, and cache results for five minutes. Totals and daily colors come directly
+from GitHub. Private contributions depend on the user's profile visibility
+settings and what the server token is permitted to see; use a token without
+private-repository access to match the public profile view.
+
 ## Prerequisites
 
 ### Shared
